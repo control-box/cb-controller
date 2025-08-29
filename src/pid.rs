@@ -34,7 +34,7 @@ use num_traits::{FromPrimitive, Num, Signed};
 ///     }
 /// }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PID<T>
 where
     T: Num + Signed + PartialOrd + Copy + FromPrimitive + Default,
@@ -59,17 +59,26 @@ where
     tolerance: Option<T>, // <-- Dead band - tolerance
 }
 
-#[derive(Debug, Default)]
+impl <T> Default for PID<T>
+where T: Num + Signed + PartialOrd + Copy + FromPrimitive + Default + Clone,
+{
+
+    fn default() -> Self {
+        PIDBuilder::<T>::default().build()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct PIDBuilder<T>
 where
-    T: Num + Signed + PartialOrd + Copy + FromPrimitive + Default,
+    T: Num + Signed + PartialOrd + Copy + FromPrimitive + Default + Clone,
 {
-    kp: T,
-    ki: Option<T>,
-    kd: Option<T>,
-    ti: Option<T>,
-    td: Option<T>,
-    dt: f32,
+    pub kp: T,
+    pub ki: Option<T>,
+    pub kd: Option<T>,
+    pub ti: Option<T>,
+    pub td: Option<T>,
+    pub dt: f32,
     output_min: Option<T>,
     output_max: Option<T>,
     setpoint_min: Option<T>,
@@ -78,6 +87,27 @@ where
     tolerance: Option<T>,
 }
 
+impl<T> Default for PIDBuilder<T>
+where
+    T: Num + Signed + PartialOrd + Copy + FromPrimitive + Default,
+{
+    fn default() -> Self {
+        PIDBuilder::<T> {
+            kp: T::one(),
+            ki: None,
+            kd: None,
+            ti: None,
+            td: None,
+            dt: 1.0_f32,
+            output_min: None,
+            output_max: None,
+            setpoint_min: None,
+            setpoint_max: None,
+            anti_windup: false,
+            tolerance: None,
+        }
+    }
+}
 impl<T> PID<T>
 where
     T: Num + Signed + PartialOrd + Copy + FromPrimitive + Default,
@@ -164,32 +194,64 @@ where
     T: Num + Signed + PartialOrd + Copy + FromPrimitive + Default,
 {
     pub fn kp(mut self, kp: T) -> Self { self.kp = kp; self }
-    pub fn ki(mut self, ki: T) -> Self { self.ki = Some(ki); self }
-    pub fn kd(mut self, kd: T) -> Self { self.kd = Some(kd); self }
-    pub fn ti(mut self, ti: T) -> Self { self.ti = Some(ti); self }
-    pub fn td(mut self, td: T) -> Self { self.td = Some(td); self }
-    pub fn dt(mut self, dt: f32) -> Self { self.dt = dt; self }
+    pub fn ki(mut self, ki: T) -> Self { self.ki = Some(ki); self.ti = None; self }
+    pub fn kd(mut self, kd: T) -> Self { self.kd = Some(kd); self.td = None; self }
+    // (German Nachstellzeit)
+    pub fn reset_time(mut self, ti: T) -> Self { self.ti = Some(ti); self.ki = None; self }
+    // (German Vorhaltezeit)
+    pub fn hold_time(mut self, td: T) -> Self { self.td = Some(td); self.kd = None; self }
+    pub fn sampling_interval(mut self, dt: f32) -> Self { self.dt = dt; self }
     pub fn output_limits(mut self, min: T, max: T) -> Self { self.output_min = Some(min); self.output_max = Some(max); self }
     pub fn anti_windup(mut self, enabled: bool) -> Self { self.anti_windup = enabled; self }
     pub fn setpoint_range(mut self, min: T, max: T) -> Self { self.setpoint_min = Some(min); self.setpoint_max = Some(max); self }
     pub fn tolerance(mut self, tol: T) -> Self { self.tolerance = Some(tol); self }
 
-    pub fn build(self) -> PID<T> {
-        let ki = match (self.ki, self.ti) {
+    pub fn get_ki(&self) -> T {
+        match (self.ki, self.ti) {
             (Some(k), _) => k,
-            (None, Some(ti)) => self.kp / ti,
+            (None, Some(t)) => self.kp / t,
             (None, None) => T::default(),
-        };
-        let kd = match (self.kd, self.td) {
-            (Some(k), _) => k,
-            (None, Some(td)) => self.kp * td,
-            (None, None) => T::default(),
-        };
+        }
+    }
 
+    pub fn get_kd(&self) -> T {
+        match (self.kd, self.td) {
+            (Some(k), _) => k,
+            (None, Some(t)) => self.kp * t,
+            (None, None) => T::default(),
+        }
+    }
+
+    pub fn get_reset_time(&self) -> T {
+        match (self.ki, self.ti) {
+            (Some(k), _) =>  self.kp / k,
+            (None, Some(t)) => t,
+            (None, None) => T::default(),
+        }
+    }
+
+    pub fn get_hold_time(&self) -> T {
+        match (self.kd, self.td) {
+            (Some(k), _) => k / self.kp,
+            (None, Some(t)) => t,
+            (None, None) => T::default(),
+        }
+    }
+    /// Determine if time parameter (reset_time, hold_time) are preferred over
+    /// ki and kd amplification parameter
+    ///
+    /// if there is no clear indication amplification (return is false)
+    pub fn is_time_parameterized(&self) -> bool {
+        if self.ti.is_some() && self.kd.is_none() { return true; }
+        if self.td.is_some() && self.ki.is_none() { return true; }
+        false
+    }
+
+    pub fn build(self) -> PID<T> {
         PID {
             kp: self.kp,
-            ki,
-            kd,
+            ki: self.get_ki(),
+            kd: self.get_kd(),
             dt: self.dt,
             integral: T::default(),
             last_error: None,
