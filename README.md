@@ -55,7 +55,6 @@ fn main() {
 
 ### Development
 
-- main branch is used to build the app and publish it at gh-pages
 - ci only checks for code sanity (build, test, doc/doc-test)
 
 ## License
