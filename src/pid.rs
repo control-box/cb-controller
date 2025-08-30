@@ -79,11 +79,11 @@ where
     pub ti: Option<T>,
     pub td: Option<T>,
     pub dt: f32,
-    output_min: Option<T>,
-    output_max: Option<T>,
+    pub output_min: Option<T>,
+    pub output_max: Option<T>,
     setpoint_min: Option<T>,
     setpoint_max: Option<T>,
-    anti_windup: bool,
+    pub anti_windup: bool,
     tolerance: Option<T>,
 }
 
@@ -206,6 +206,10 @@ where
     pub fn setpoint_range(mut self, min: T, max: T) -> Self { self.setpoint_min = Some(min); self.setpoint_max = Some(max); self }
     pub fn tolerance(mut self, tol: T) -> Self { self.tolerance = Some(tol); self }
 
+    pub fn reset_output_limits(self) ->  Self {
+        PIDBuilder { output_min: None, output_max: None, anti_windup: false, ..self }
+    }
+
     pub fn get_ki(&self) -> T {
         match (self.ki, self.ti) {
             (Some(k), _) => k,
@@ -245,6 +249,15 @@ where
         if self.ti.is_some() && self.kd.is_none() { return true; }
         if self.td.is_some() && self.ki.is_none() { return true; }
         false
+    }
+
+    /// Check if output limitting is configured
+    pub fn is_output_limited(&self) -> bool {
+        match (self.output_max, self.output_min) {
+            (None, None) => true,
+            (Some(_), Some(_)) => false,
+            _ => true, // either upper or lower limit is set - no use case for now
+        }
     }
 
     pub fn build(self) -> PID<T> {
