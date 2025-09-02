@@ -228,10 +228,10 @@ where
     /// This output leveling only happens on ON operation.
     /// Switching anti-windup on, prevents the integral portion to windup if out of band.
     pub fn set_output_limit(&mut self, ol: PidOutputLimit<T>) {
-        self.output_limit = Some(ol)
+        self.output_limit = Some(ol);
     }
     pub fn reset_output_limit(&mut self) {
-        self.output_limit = None
+        self.output_limit = None;
     }
     pub fn is_output_limited(&self) -> bool {
         self.output_limit.is_some()
@@ -243,10 +243,10 @@ where
     /// - **OFF operation**: if setpoint is outside this range the pid controller is off and produced
     ///   a constant out of band output
     pub fn set_setpoint_range(&mut self, sr: PidSetpointRange<T>) {
-        self.setpoint_range = Some(sr)
+        self.setpoint_range = Some(sr);
     }
     pub fn reset_setpoint_range(&mut self) {
-        self.setpoint_range = None
+        self.setpoint_range = None;
     }
     pub fn is_setpoint_range(&self) -> bool {
         self.setpoint_range.is_some()
@@ -258,6 +258,12 @@ where
     /// the pid controller output is frozen (to the previous output)
     pub fn set_dead_band_tolerance(&mut self, t: T) {
         self.dead_band_tolerance = Some(t)
+    }
+    pub fn reset_dead_band_tolerance(&mut self) {
+        self.dead_band_tolerance = None;
+    }
+    pub fn is_dead_band_tolerance(&self) -> bool {
+        self.dead_band_tolerance.is_some()
     }
 
     /// Reset the pid controller - all internal processing states are reset
