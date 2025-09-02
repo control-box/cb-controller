@@ -10,7 +10,7 @@ use num_traits::{FromPrimitive, Num, Signed};
 ///
 /// # Example
 /// ```
-/// use cb_controller::pid::{PidCoreBuilder, PidOutputLimit, PidAllowedSetpointRange};
+/// use cb_controller::pid::{PidCoreBuilder, PidOutputLimit, PidSetpointRange};
 ///
 /// // The essential PID controller configuration is done via builder
 /// let mut pid = PidCoreBuilder::<f32>::default()
@@ -20,7 +20,7 @@ use num_traits::{FromPrimitive, Num, Signed};
 ///
 /// // Optional features are injected after the build any time
 /// pid.set_output_limit(PidOutputLimit::default().range(0.0, 10.0).invert_range().anti_windup(true));
-/// pid.set_setpoint_range(PidAllowedSetpointRange::default().range(0.0, 50.0).out_of_band_output(0.0));
+/// pid.set_setpoint_range(PidSetpointRange::default().range(0.0, 50.0).out_of_band_output(0.0));
 ///
 /// let mut y = 0.0;
 /// let linear_plant = 2.0;
@@ -45,9 +45,9 @@ where
     ki: T,
     kd: T,
     dt: f32,
-    output_limit: Option<PidOutputLimit<T>>,  // output mapping and limitation
-    setpoint_range: Option<PidAllowedSetpointRange<T>>,  // Input validation modells on/off of the controller
-    dead_band_tolerance: Option<T>, // <-- Dead band - tolerance
+    output_limit: Option<PidOutputLimit<T>>, // output mapping and limitation
+    setpoint_range: Option<PidSetpointRange<T>>, // Input validation modells on/off of the controller
+    dead_band_tolerance: Option<T>,              // <-- Dead band - tolerance
 
     // working data
     integral: T,
@@ -55,16 +55,15 @@ where
     last_output: Option<T>,
 }
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct PidOutputLimit<T>
 where
     T: Num + Signed + PartialOrd + Copy + Default,
 {
     minimum: T,
-    maximum: T, // assured the condition: minimum =< maximum
-    invert: T, // either 1 (no invert) or -1 (invert) for easy numeric operation
-    anti_windup: bool,
+    maximum: T,    // assured the condition: minimum =< maximum
+    pub invert: T, // either 1 (no invert) or -1 (invert) for easy numeric operation
+    pub anti_windup: bool,
 }
 
 impl<T> PidOutputLimit<T>
@@ -72,20 +71,40 @@ where
     T: Num + Signed + PartialOrd + Copy + Default,
 {
     pub fn range(self, first: T, second: T) -> Self {
-        let (minimum, maximum,invert) = if first < second {
+        let (minimum, maximum, invert) = if first < second {
             (first, second, T::one())
         } else {
             (second, first, T::zero() - T::one())
         };
-        PidOutputLimit::<T> { minimum, maximum, invert, .. self }}
+        PidOutputLimit::<T> {
+            minimum,
+            maximum,
+            invert,
+            ..self
+        }
+    }
 
     pub fn invert_range(self) -> Self {
-        PidOutputLimit::<T> { invert: T::zero() - T::one(), .. self }
+        PidOutputLimit::<T> {
+            invert: T::zero() - T::one(),
+            ..self
+        }
     }
 
     /// Anti windup strategy: Conditional integration
     pub fn anti_windup(self, anti_windup: bool) -> Self {
-        PidOutputLimit::<T> { anti_windup, .. self }
+        PidOutputLimit::<T> {
+            anti_windup,
+            ..self
+        }
+    }
+
+    // public getter, since minium and maximum must be private due to robust setter
+    pub fn minimum(&self) -> T {
+        self.minimum
+    }
+    pub fn maximum(&self) -> T {
+        self.maximum
     }
 }
 
@@ -94,21 +113,26 @@ where
     T: Num + Signed + PartialOrd + Copy + Default,
 {
     fn default() -> Self {
-        PidOutputLimit::<T> { minimum: T:: zero(), maximum: T::one(), invert: T::one(), anti_windup: false }
+        PidOutputLimit::<T> {
+            minimum: T::zero(),
+            maximum: T::one(),
+            invert: T::one(),
+            anti_windup: false,
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct PidAllowedSetpointRange<T>
+pub struct PidSetpointRange<T>
 where
     T: Num + Signed + PartialOrd + Copy + Default,
 {
     minimum: T,
     maximum: T,
-    off_band_output: T,
+    pub off_band_output: T,
 }
 
-impl<T> PidAllowedSetpointRange<T>
+impl<T> PidSetpointRange<T>
 where
     T: Num + Signed + PartialOrd + Copy + Default,
 {
@@ -118,23 +142,41 @@ where
         } else {
             (second, first)
         };
-        PidAllowedSetpointRange::<T> { minimum, maximum, .. self }
+        PidSetpointRange::<T> {
+            minimum,
+            maximum,
+            ..self
+        }
     }
 
     pub fn out_of_band_output(self, off_band_output: T) -> Self {
-         PidAllowedSetpointRange::<T> { off_band_output, .. self }
+        PidSetpointRange::<T> {
+            off_band_output,
+            ..self
+        }
+    }
+
+    // public getter, since minium and maximum must be private due to robust setter
+    pub fn minimum(&self) -> T {
+        self.minimum
+    }
+    pub fn maximum(&self) -> T {
+        self.maximum
     }
 }
 
-impl<T> Default for PidAllowedSetpointRange<T>
+impl<T> Default for PidSetpointRange<T>
 where
     T: Num + Signed + PartialOrd + Copy + Default + FromPrimitive,
 {
     fn default() -> Self {
-        PidAllowedSetpointRange::<T> { minimum: T::zero(), maximum: T::one(), off_band_output: T::zero() }
+        PidSetpointRange::<T> {
+            minimum: T::zero(),
+            maximum: T::one(),
+            off_band_output: T::zero(),
+        }
     }
 }
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PidCoreBuilder<T>
@@ -156,8 +198,8 @@ where
     fn default() -> Self {
         PidCoreBuilder::<T> {
             kp: T::one(),
-            ki: None,
-            kd: None,
+            ki: Some(T::zero()),
+            kd: Some(T::zero()),
             ti: None,
             td: None,
             dt: 1.0_f32,
@@ -165,8 +207,9 @@ where
     }
 }
 
-impl <T> Default for PidController<T>
-where T: Num + Signed + PartialOrd + Copy + FromPrimitive + Default + Clone,
+impl<T> Default for PidController<T>
+where
+    T: Num + Signed + PartialOrd + Copy + FromPrimitive + Default + Clone,
 {
     fn default() -> Self {
         PidCoreBuilder::<T>::default().build()
@@ -184,25 +227,38 @@ where
     ///
     /// This output leveling only happens on ON operation.
     /// Switching anti-windup on, prevents the integral portion to windup if out of band.
-    pub fn set_output_limit(&mut self, ol: PidOutputLimit<T>)  { self.output_limit = Some(ol) }
-    pub fn reset_output_limit(&mut self)  { self.output_limit = None }
-    pub fn is_output_limited(&self) -> bool { self.output_limit.is_some() }
+    pub fn set_output_limit(&mut self, ol: PidOutputLimit<T>) {
+        self.output_limit = Some(ol)
+    }
+    pub fn reset_output_limit(&mut self) {
+        self.output_limit = None
+    }
+    pub fn is_output_limited(&self) -> bool {
+        self.output_limit.is_some()
+    }
 
     /// Enforce allowed setpoint range
     ///
     /// - **ON operation**: if setpoint is within range the pid controller operates as designed
     /// - **OFF operation**: if setpoint is outside this range the pid controller is off and produced
     ///   a constant out of band output
-    pub fn set_setpoint_range(&mut self, sr: PidAllowedSetpointRange<T>) { self.setpoint_range  = Some(sr) }
-    pub fn reset_setpoint_range(&mut self) { self.setpoint_range = None }
-    pub fn is_setpoint_range(&self) -> bool { self.setpoint_range.is_some() }
+    pub fn set_setpoint_range(&mut self, sr: PidSetpointRange<T>) {
+        self.setpoint_range = Some(sr)
+    }
+    pub fn reset_setpoint_range(&mut self) {
+        self.setpoint_range = None
+    }
+    pub fn is_setpoint_range(&self) -> bool {
+        self.setpoint_range.is_some()
+    }
 
     /// Enforce dead band tolerance
     ///
     /// if the absolute difference between setpoint and process variable is less than the tolerance,
     /// the pid controller output is frozen (to the previous output)
-    pub fn set_dead_band_tolerance(&mut self, t: T) { self.dead_band_tolerance = Some(t) }
-
+    pub fn set_dead_band_tolerance(&mut self, t: T) {
+        self.dead_band_tolerance = Some(t)
+    }
 
     /// Reset the pid controller - all internal processing states are reset
     /// Any configuration like *Kp*, *Ki*, etc are not changed
@@ -231,7 +287,9 @@ where
         // Deadband tolerance check
         if let Some(tol) = self.dead_band_tolerance {
             if let Some(last_output) = self.last_output {
-                if error.abs() <= tol { return last_output; }  // inside dead band
+                if error.abs() <= tol {
+                    return last_output;
+                } // inside dead band
             }
         }
 
@@ -248,7 +306,7 @@ where
         // Output Adjustment
         if let Some(ol) = &self.output_limit {
             // Output level shift and inverstion based on output range
-            output = output * ol.invert + (ol.maximum + ol.minimum) / ( T::one() + T::one());
+            output = output * ol.invert + (ol.maximum + ol.minimum) / (T::one() + T::one());
 
             let mut limit_correction = false;
             if output < ol.minimum {
@@ -268,7 +326,7 @@ where
         }
 
         self.last_error = Some(error);
-        self.last_output = Some(output);  // store for dead band tolerance
+        self.last_output = Some(output); // store for dead band tolerance
         output
     }
 }
@@ -277,14 +335,36 @@ impl<T> PidCoreBuilder<T>
 where
     T: Num + Signed + PartialOrd + Copy + FromPrimitive + Default,
 {
-    pub fn kp(mut self, kp: T) -> Self { self.kp = kp; self }
-    pub fn ki(mut self, ki: T) -> Self { self.ki = Some(ki); self.ti = None; self }
-    pub fn kd(mut self, kd: T) -> Self { self.kd = Some(kd); self.td = None; self }
+    pub fn kp(mut self, kp: T) -> Self {
+        self.kp = kp;
+        self
+    }
+    pub fn ki(mut self, ki: T) -> Self {
+        self.ki = Some(ki);
+        self.ti = None;
+        self
+    }
+    pub fn kd(mut self, kd: T) -> Self {
+        self.kd = Some(kd);
+        self.td = None;
+        self
+    }
     // (German Nachstellzeit)
-    pub fn reset_time(mut self, ti: T) -> Self { self.ti = Some(ti); self.ki = None; self }
+    pub fn reset_time(mut self, ti: T) -> Self {
+        self.ti = Some(ti);
+        self.ki = None;
+        self
+    }
     // (German Vorhaltezeit)
-    pub fn hold_time(mut self, td: T) -> Self { self.td = Some(td); self.kd = None; self }
-    pub fn sampling_interval(mut self, dt: f32) -> Self { self.dt = dt; self }
+    pub fn hold_time(mut self, td: T) -> Self {
+        self.td = Some(td);
+        self.kd = None;
+        self
+    }
+    pub fn sampling_interval(mut self, dt: f32) -> Self {
+        self.dt = dt;
+        self
+    }
 
     pub fn get_ki(&self) -> T {
         match (self.ki, self.ti) {
@@ -304,7 +384,7 @@ where
 
     pub fn get_reset_time(&self) -> T {
         match (self.ki, self.ti) {
-            (Some(k), _) =>  self.kp / k,
+            (Some(k), _) => self.kp / k,
             (None, Some(t)) => t,
             (None, None) => T::default(),
         }
@@ -323,8 +403,12 @@ where
     ///
     /// if there is no clear indication amplification (return is false)
     pub fn is_time_parameterized(&self) -> bool {
-        if self.ti.is_some() && self.kd.is_none() { return true; }
-        if self.td.is_some() && self.ki.is_none() { return true; }
+        if self.ti.is_some() && self.kd.is_none() {
+            return true;
+        }
+        if self.td.is_some() && self.ki.is_none() {
+            return true;
+        }
         false
     }
 
@@ -388,8 +472,7 @@ mod tests {
         let expected = PidOutputLimit::<f32>::default()
             .range(-1.0, 1.0)
             .invert_range();
-        let sut = PidOutputLimit::<f32>::default()
-            .range(1.0, -1.0);
+        let sut = PidOutputLimit::<f32>::default().range(1.0, -1.0);
         assert_eq!(sut, expected);
     }
 
@@ -402,7 +485,7 @@ mod tests {
             .sampling_interval(1.0)
             .build();
 
-        let range = PidAllowedSetpointRange::<f32>::default()
+        let range = PidSetpointRange::<f32>::default()
             .range(0.0, 5.0)
             .out_of_band_output(-99.0);
         pid.set_setpoint_range(range);
@@ -414,10 +497,10 @@ mod tests {
 
     #[test]
     fn pid_setpoint_range_range_function() {
-        let expected = PidAllowedSetpointRange::<f32>::default()
+        let expected = PidSetpointRange::<f32>::default()
             .range(0.0, 5.0)
             .out_of_band_output(-99.0);
-        let sut = PidAllowedSetpointRange::<f32>::default()
+        let sut = PidSetpointRange::<f32>::default()
             .range(5.0, 0.0)
             .out_of_band_output(-99.0);
         assert_eq!(sut, expected);
@@ -436,5 +519,46 @@ mod tests {
         let first = pid.update(0.0, 0.4); // within dead band
         let second = pid.update(0.0, 0.4); // should return last output
         assert_eq!(second, first);
-     }
+    }
+
+    #[test]
+    fn test_kd_and_hold_time_setters_getters() {
+        let builder = PidCoreBuilder::<f64>::default();
+
+        // Set Kd and check get_kd and get_hold_time
+        let builder_kd = builder.clone().kd(2.5);
+        assert_eq!(builder_kd.get_kd(), 2.5);
+        // get_hold_time should return the corresponding time value for Kd
+        let expected_hold_time = builder_kd.get_hold_time();
+        // Setting hold_time should update Kd accordingly
+        let builder_hold = builder_kd.clone().hold_time(expected_hold_time);
+        assert!((builder_hold.get_kd() - builder_kd.get_kd()).abs() < 1e-10);
+
+        // Set hold_time and check get_hold_time and get_kd
+        let builder_hold2 = builder.clone().hold_time(0.8);
+        assert!((builder_hold2.get_hold_time() - 0.8).abs() < 1e-10);
+        // get_kd should return the corresponding amplification value for hold_time
+        let expected_kd = builder_hold2.get_kd();
+        let builder_kd2 = builder_hold2.clone().kd(expected_kd);
+        assert!((builder_kd2.get_hold_time() - builder_hold2.get_hold_time()).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_ki_and_reset_time_setters_getters() {
+        let builder = PidCoreBuilder::<f64>::default();
+
+        // Set Ki and check get_ki and get_reset_time
+        let builder_ki = builder.clone().ki(1.5);
+        assert_eq!(builder_ki.get_ki(), 1.5);
+        let expected_reset_time = builder_ki.get_reset_time();
+        let builder_reset = builder_ki.clone().reset_time(expected_reset_time);
+        assert!((builder_reset.get_ki() - builder_ki.get_ki()).abs() < 1e-10);
+
+        // Set reset_time and check get_reset_time and get_ki
+        let builder_reset2 = builder.clone().reset_time(0.6);
+        assert!((builder_reset2.get_reset_time() - 0.6).abs() < 1e-10);
+        let expected_ki = builder_reset2.get_ki();
+        let builder_ki2 = builder_reset2.clone().ki(expected_ki);
+        assert!((builder_ki2.get_reset_time() - builder_reset2.get_reset_time()).abs() < 1e-10);
+    }
 }
