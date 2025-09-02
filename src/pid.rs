@@ -288,7 +288,7 @@ where
         }
         // controller is ON from hereafter
 
-        let error = setpoint - input;
+        let error = input - setpoint;
 
         // Deadband tolerance check
         if let Some(tol) = self.dead_band_tolerance {
