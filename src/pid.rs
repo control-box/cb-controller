@@ -56,6 +56,23 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum PidAntiWindup<T> {
+    IntegralReset,
+    /// the compensating factor beta should be in range 0.0..1.0
+    /// the integral portion gets compensated by beta * ki * (actual output - limited output)
+    CompensatingIntegration(T),  // aka Back calculation with k_aw factor
+    NoAntiWindup,
+}
+
+impl<T> Default for  PidAntiWindup<T>
+
+{
+    fn default() -> Self {
+        PidAntiWindup::<T>::NoAntiWindup
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct PidOutputLimit<T>
 where
     T: Num + Signed + PartialOrd + Copy + Default,
@@ -63,7 +80,7 @@ where
     minimum: T,
     maximum: T,    // assured the condition: minimum =< maximum
     pub invert: T, // either 1 (no invert) or -1 (invert) for easy numeric operation
-    pub anti_windup: bool,
+    pub anti_windup: PidAntiWindup<T>,
 }
 
 impl<T> PidOutputLimit<T>
@@ -92,7 +109,7 @@ where
     }
 
     /// Anti windup strategy: Conditional integration
-    pub fn anti_windup(self, anti_windup: bool) -> Self {
+    pub fn anti_windup(self, anti_windup: PidAntiWindup<T>) -> Self {
         PidOutputLimit::<T> {
             anti_windup,
             ..self
@@ -117,7 +134,7 @@ where
             minimum: T::zero(),
             maximum: T::one(),
             invert: T::one(),
-            anti_windup: false,
+            anti_windup: PidAntiWindup::NoAntiWindup,
         }
     }
 }
@@ -275,7 +292,7 @@ where
     }
 
     /// The control loop update function
-    pub fn update(&mut self, input: T, setpoint: T) -> T {
+    pub fn update(&mut self, process_variable: T, setpoint: T) -> T {
         let dt = T::from_f32(self.dt).unwrap_or(T::one());
 
         // Setpoint range check
@@ -288,7 +305,7 @@ where
         }
         // controller is ON from hereafter
 
-        let error = input - setpoint;
+        let error = setpoint - process_variable;
 
         // Deadband tolerance check
         if let Some(tol) = self.dead_band_tolerance {
@@ -315,19 +332,30 @@ where
             output = output * ol.invert + (ol.maximum + ol.minimum) / (T::one() + T::one());
 
             let mut limit_correction = false;
+            let mut output_correction_gap = T::zero();
             if output < ol.minimum {
+                output_correction_gap = output - ol.minimum;
                 output = ol.minimum;
                 limit_correction = true;
             }
             if output > ol.maximum {
+                output_correction_gap = output - ol.maximum;
                 output = ol.maximum;
                 limit_correction = true;
             }
             // Anti windup correction by resetting the integral accumulation
             // method is called conditional integration
             // simple, small stationary errors are possible
-            if ol.anti_windup && limit_correction {
-                self.integral = T::zero();
+            match ol.anti_windup {
+                PidAntiWindup::IntegralReset=> {
+                    if limit_correction {
+                        self.integral = T::zero();
+                    }
+                }
+                PidAntiWindup::CompensatingIntegration(beta) => {
+                    self.integral = self.integral + self.ki * beta * output_correction_gap;
+                }
+                PidAntiWindup::NoAntiWindup => {}
             }
         }
 
@@ -447,9 +475,9 @@ mod tests {
             .sampling_interval(0.1)
             .build();
 
-        let input = 0.0;
+        let process_variable = 0.0;
         let setpoint = 10.0;
-        let output = pid.update(input, setpoint);
+        let output = pid.update(process_variable, setpoint);
         // Output should be positive and non-zero for positive error
         assert!(output > 0.0);
     }
@@ -465,7 +493,7 @@ mod tests {
 
         let limit = PidOutputLimit::<f32>::default()
             .range(-1.0, 1.0)
-            .anti_windup(true);
+            .anti_windup(PidAntiWindup::IntegralReset);
         pid.set_output_limit(limit);
 
         let output = pid.update(0.0, 10.0);
@@ -567,4 +595,95 @@ mod tests {
         let builder_ki2 = builder_reset2.clone().ki(expected_ki);
         assert!((builder_ki2.get_reset_time() - builder_reset2.get_reset_time()).abs() < 1e-10);
     }
+
+    #[test]
+    fn pid_antiwindup_integral_reset() {
+        use super::{PidCoreBuilder, PidOutputLimit, PidAntiWindup};
+
+        let mut pid = PidCoreBuilder::<f32>::default()
+            .kp(1.0)
+            .ki(1.0)
+            .kd(0.0)
+            .sampling_interval(1.0)
+            .build();
+
+        // Set output limit with IntegralReset anti-windup
+        let limit = PidOutputLimit::<f32>::default()
+            .range(-10.0, 10.0)
+            .anti_windup(PidAntiWindup::IntegralReset);
+        pid.set_output_limit(limit);
+
+        // Drive the integral up by repeated updates
+        let output = pid.update(0.0, 5.0);
+        assert_eq!(output , 10.0);
+
+        let integral_before = pid.integral;
+
+        // Now, output should be limited and integral should be reset after hitting the limit
+        let output = pid.update(0.0, 10.0);
+        assert_eq!(output, 10.0);
+        assert_eq!(pid.integral, 0.0);
+        assert!(integral_before > 0.0);
+    }
+
+    #[test]
+    fn pid_antiwindup_compensating_integration() {
+        use super::{PidCoreBuilder, PidOutputLimit, PidAntiWindup};
+
+        let mut pid = PidCoreBuilder::<f32>::default()
+            .kp(1.0)
+            .ki(1.0)
+            .kd(0.0)
+            .sampling_interval(1.0)
+            .build();
+
+        // Set output limit with CompensatingIntegration anti-windup
+        let limit = PidOutputLimit::<f32>::default()
+            .range(-1.0, 1.0)
+            .anti_windup(PidAntiWindup::CompensatingIntegration(0.5));
+        pid.set_output_limit(limit);
+
+        // Drive the integral up by repeated updates
+        for _ in 0..10 {
+            pid.update(0.0, 10.0);
+        }
+        let integral_before = pid.integral;
+
+        // Now, output should be limited and integral should be compensated (not reset)
+        let output = pid.update(0.0, 10.0);
+        assert_eq!(output, 1.0);
+        // Integral should be reduced, but not reset to zero
+        assert_eq!(pid.integral , integral_before);
+        assert!(pid.integral > 0.0);
+    }
+
+    #[test]
+    fn pid_antiwindup_no_antiwindup() {
+        use super::{PidCoreBuilder, PidOutputLimit, PidAntiWindup};
+
+        let mut pid = PidCoreBuilder::<f32>::default()
+            .kp(1.0)
+            .ki(1.0)
+            .kd(0.0)
+            .sampling_interval(1.0)
+            .build();
+
+        // Set output limit with NoAntiWindup
+        let limit = PidOutputLimit::<f32>::default()
+            .range(-1.0, 1.0)
+            .anti_windup(PidAntiWindup::NoAntiWindup);
+        pid.set_output_limit(limit);
+
+        // Drive the integral up by repeated updates
+        for _ in 0..10 {
+            pid.update(0.0, 10.0);
+        }
+        let integral_before = pid.integral;
+
+        // Now, output should be limited but integral should not be reset or compensated
+        let output = pid.update(0.0, 10.0);
+        assert_eq!(output, 1.0);
+        assert_eq!(pid.integral, integral_before + 10.0);
+    }
+
 }
